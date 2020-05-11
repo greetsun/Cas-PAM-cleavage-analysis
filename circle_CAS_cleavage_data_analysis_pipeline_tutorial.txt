@@ -1,0 +1,370 @@
+###################################################
+# Circle PAM assay data analysis pipeline overview
+###################################################
+# This data analysis pipeline is designed for the circle PAM NGS assay (developed by Ryan F.) 
+# to characterize PAM sequence and cleavage patterns of Class II CRISPR-Cas nuclease. 
+# It consists of 4 major steps (see below "Analysis Workflow").
+# From Step 1 to Step 3, each step is accomplished by running a pipeline script. 
+# And the last step is to visualize the cleavage pattern in the heatmap format using an excel template
+#
+# Author and Contact: Zhiyi Sun (sunz@neb.com)
+# Last modified: January, 2019 
+
+#====================
+# Analysis workflow
+#====================
+# 0, Prepare reference sequence and bowtie2 index files for the Cas-nuclease substrate and for the BstXI substrate (control)
+# 1, Analyze the BstXI control datasets to get the background base frequencies of the randomized PAM sequence region
+#	 Pipeline script: [circle_PAM_control_BstXI_data_analysis_pipeline.sh]
+# 2, Analyze Cas-nuclease circle PAM datasets to characterize cleavage patterns and to extract PAM sequences
+#	 Pipeline script: [circle_PAM_data_analysis_pipeline.sh] 
+# 3, Generate Position Weight Matrix and sequence logo for the PAM sequences of a specific cut pattern  
+#	using the output from Step 2 (*cut_pattern_result_summary.txt) and the background base frequencies from Step 1
+# 	 Pipeline script: [pam_selection_and_sequence_logo.sh] 
+# 4, Generate heatmap of cleavage patterns in Excel (use the matrix files generated from step 2)
+#	Excel heatmap template: [cas_nuclease_cleavage_pattern_matrix_heatmap_template.xltx]
+
+#===============================
+# Required scripts and software
+#===============================
+#-------------
+# Scripts
+#-------------
+# 1, [circle_PAM_control_BstXI_data_analysis_pipeline.sh]: the main pipeline script for step 1
+# 2, [circle_PAM_data_analysis_pipeline.sh]: the main pipeline script for step 2
+# 3, [pam_selection_and_sequence_logo.sh]: the main pipeline script for step 3
+# 4, [extract_seq_from_sam.pl]: a perl script called by the step 1 pipeline script [circle_PAM_control_BstXI_data_analysis_pipeline]
+# 5, [characterize_cut_pattern_from_circle_PAM.pl]: a perl script called by the step 2 pipeline script [circle_PAM_data_analysis_pipeline.sh] 
+# 6, [generate_PWM_seqlogo.r]: a R script called by the step 3 pipeline script [pam_selection_and_sequence_logo.sh]; 
+	This script generates PWM and the corresponding logo in R program
+
+#----------------------
+# Software requirement
+#----------------------
+# 1, SeqPrep (https://github.com/jstjohn/SeqPrep): for adapter trimming and merging pair-end reads
+# 2, Bowtie2 (http://bowtie-bio.sourceforge.net/bowtie2/index.shtml): for mapping
+# 3, weblogo (https://weblogo.berkeley.edu/): for generating regular sequence logo and calculating per-position base frequencies 
+# 4, R (https://www.r-project.org/): for calculating PWM and making PWM logo plot
+# 5, perl (https://www.perl.org/): for data processing
+# 6, Excel (https://www.microsoft.com/en-us/microsoft-365/excel): for generating cleavage pattern heatmaps
+# 
+# NOTE: 
+# In this pipeline, most analyses are conducted in a Conda environment (https://docs.conda.io/projects/conda/en/latest/. A system for package, dependency and environment management)
+# If you don't use Conda, make sure all the required tools are either added to your system path ($PATH) or specify the path to individual programs when calling them in the scripts. 
+# Then comment out the following Conda lines in the scripts:
+# 	conda activate ***
+# 	conda deactivate
+
+#############################
+# Description of each step
+#############################
+#========================================================
+# Step 0, prepare reference sequence and bowtie2 index files for the Cas-nuclease substrate and for the BstXI substrate (control)
+#========================================================
+#-------------------------
+# Cas-nuclease substrate
+#-------------------------
+## Rule:
+# take 25bp upstream of the randomized region as the start of the reference sequence, then append the same 25bp sequence to the 3' end to make the reference sequence. Therefore, the reference sequence should be 25bp longer than the substrate sequence	
+
+## Example:
+#Sequence XL is used as a substrate for the circle PAM assay:
+#XL substrate sequence = GTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATT
+#Where "NNNNNNNNN" is the randomized region for PAM detection. 
+
+#Convert it to the following reference sequence:
+>XL
+TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
+# And save it to a fasta file: [circle_pam_substrate.fa]
+# NOTE: You can combine all the substrate sequences (e.g., XL, XLL etc) in one big fasta file and make index files all together.
+
+#Build bowtie2 index, run the following command:
+bowtie2-build circle_pam_substrate.fa circle_pam_substrate
+
+#----------------------------
+# BstXI substrate (control)
+#---------------------------
+## BstXI recognition sequence and digestion pattern:
+#       5'...CCAN NNNN|NTGG...3'
+#       3'...GGTN|NNNN NACC...5'
+
+## Rule: prepare the reference sequence so that it starts with "NTGG" as the last 4 bases of BstXI recognition sequence (also where the digestion occurs on the top strand)
+# Also the reference sequence ends with "CCAN" as the first 4 bases of the recognition sequence, and is 4-base shorter than the original substrate sequence (see below for an example and explanation)
+
+## Example: Assume below is a 140bp substrate of BstXI control assay:
+# (CCA)ATTGTA(TGG)GATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACT
+# Where (CCA)ATTGTA(TGG) is the recognition sequence; and NNNNNNNNNN is the randomized region of length 10
+
+# After circulation and BstXI digestion, it becomes:
+#      A(TGG)GATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACT(CCA)ATTGT
+#  AACAT(ACC)CTACGATTGTGGTTAGTTTACTGTGTCTGAGGTCAGTACTGGGAGTTCTCCTCTTTCGTCACTCACCCTTTCCATTAGCTTGACANNNNNNNNNNGTGCAAGTCTTACCGAACCTGAGCTGTACCTGA(GGT)T
+#
+# Then after end repair:
+#      A(TGG)GATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACT(CCA)A
+#      T(ACC)CTACGATTGTGGTTAGTTTACTGTGTCTGAGGTCAGTACTGGGAGTTCTCCTCTTTCGTCACTCACCCTTTCCATTAGCTTGACANNNNNNNNNNGTGCAAGTCTTACCGAACCTGAGCTGTACCTGA(GGT)T
+# This is the insert that will be sequenced on a NGS machine. Note: This insert is 4 base shorter than the original substrate-- this is because the 4-base 3' overhang generated by BstXI digestion is removed during the end-repair step
+#
+## Use this insert sequence (136bp) as the reference sequence for BstXI control experiment.
+## NOTE: In this reference sequence, the randomized region (N10) starts at position 90, you will need this information to run the data analysis pipeline for the control experiment in the next step
+>XL_BstXI
+ATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAA
+# Save it as a fasta file: [BstXI_XL_control.fa]
+
+# Build bowtie2 index, run the following command:
+bowtie2-build BstXI_control.fa BstXI_control
+
+# NOTE: You can combine all the control substrate sequences (e.g., XL_BstXI, XLL_BstXI etc) in one big fasta file and make index files all together.
+
+#================================================================
+# Step 1, run pipeline script: [circle_PAM_control_BstXI_data_analysis_pipeline] on the BstXI control datasets to get the background base frequencies
+#================================================================
+#------------------
+# Important notes: 
+#------------------
+# Before merging the reads, run fastqc to check data quality read length (seqprep works best if both R1 and R2 reads contains the adapter sequence (partial is fine) at the 3' end and there is a good overlap between R1 and R2).
+
+#----------------------------
+# Description and usage of the pipeline
+#----------------------------
+# This pipeline script is for analyzing the Illumina sequencing data of the circle PAM control assay using BstXI (developed by Ryan Fuchs).
+#	It takes pair-end fastq files as input, after merging the pair-end reads into full-length fragments and mapping them to the reference sequence (need to be prepared in advance and indexed using the bowtie2-build utility) 
+#	it extracts the randomized region from the reads and calculates the background base frequencies, which will be used to normalize PAM sequence enrichment scores.
+# In details, this scripts performs the following tasks: 			 
+# 1, trim adapters and merge forward and reverse read* (seqprep)
+# 	*NOTE: Before merging the reads, run fastqc to check data quality and read length (seqprep works best if both R1 and R2 reads contains the adapter sequence (partial is fine) at the 3' end and there is a good overlap between R1 and R2).
+## 2, remove short reads (<100bp)
+# 3, map merged reads to the reference (bowtie2)
+# 4, Extract random sequence (10nt) from the good alignments*
+#	 *criteria of a good alignment: primary alignment; MAPQ>=20; the entire read map to the reference (from start to end)
+#	 This step will call another perl script: [extract_seq_from_sam.pl]
+# 5, calculate the base frequency of the extracted random sequences
+#
+#----------------
+# Output
+#----------------
+# The final output of this pipeline is a text file [*_merged_100bp+_random_sequence_base_freq.txt] with the A, C, G, T base composition (percentage) of the random region in the substrate
+# An example of the output file:
+# A       C       G       T
+# 20.15   18.71   34.93   26.21
+
+## Usage
+#	bash circle_PAM_contral_BstXI_data_analysis_pipeline.sh R1_fastq_file R2_fastq_file output_prefix bowtie2_index reference_name reference_sequence_length start_position_random_sequence random_sequence_size
+#
+# Usage (on a computing cluster):
+#	qsub circle_PAM_contral_BstXI_data_analysis_pipeline.sh R1_fastq_file R2_fastq_file output_prefix bowtie2_index reference_name reference_sequence_length start_position_random_sequence random_sequence_size
+#
+# To run this pipeline, you will need to supply the following 6 arguments (separate the arguments by space):
+# 1, R1_fastq_file: fastq of R1. File name should end with "gz", "fastq" or "fq"
+# 2, R2_fastq_file: fastq of R2.  File name should end with "gz", "fastq" or "fq"  
+# 3, output_prefix: prefix of all the output file names
+# 4, bowtie2_index: The path plus basename of the index for the reference genome. The basename is the name of any of the index files up to but not including the final .1.bt2 / .rev.1.bt2 / etc.   
+# 5, reference_name: name of the reference sequence (it should be the same as the header (the content after ">") of the reference fasta file) 
+# 6, reference_sequence_length: length of the reference sequence
+# 7, start_position_random_sequence: 1-based left most position of the random sequence in the reference to be extracted
+# 8, random_sequence_size: (optional) size of the random sequence to be extracted. Default=10 bases
+#
+#--------------
+# Example:
+#--------------
+# BstXI experiment using XL as the substrate
+#== Illumina sequencing reads fastq files:
+# 	R1: 46.1.fastq
+# 	R2: 46.2.fastq 
+#== Prefix of all the output files: BstXI_XL_control (you can use any name as appropriate and informative) 
+#== Prefix of Bowtie2 index files for the BstXI substrates: ~/work/projects/CirclePAM/reference/BstXI_control 
+#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "~/work/projects/CirclePAM/reference/")
+#== Reference sequence name: XL_BstXI
+#== Reference sequence length: 136bp
+#== Start position of the randomized region in the reference sequence: 90 (1-based)
+#== length of the randomized region: 10 bases (default)
+
+#Command: 
+qsub ~/work/projects/CirclePAM/script/circle_PAM_contral_BstXI_data_analysis_pipeline.sh 46.1.fastq 46.2.fastq BstXI_XL_control ~/work/projects/CirclePAM/reference/BstXI_control XL_BstXI 136 90 10 
+# NOTE: if the script is not in the current directory, you need to provide the path to the script. 
+# In this case, the script is saved in "~/work/projects/CirclePAM/script/"
+
+# It will generate an output file (BstXI_XL_control_merged_100bp+_random_sequence_base_freq.txt) with the following content:
+# A       C       G       T
+# 20.15   18.71   34.93   26.22
+#
+## NOTE: In theory the values of the 4 bases should add up to 100, however, it sometimes could be slightly lower (e.g., 99.9) or higher (100.1, in the above example) due to rounding effect. 
+# 		In that case, you need to make some adjustment (e.g., use A=20.2, C=18.7, G=34.9, T=26.2) to make the sum of the 4 values to be 100 in order to run the script in Step 3 without error.
+
+#================================================================
+# Step 2, run pipeline script: [circle_PAM_data_analysis_pipeline.sh] on Cas-nuclease datasets to characterize cleavage patterns and to extract PAM sequences 
+#================================================================
+#------------------
+# Important notes: 
+#------------------
+# Before merging the reads, run fastqc to check data quality read length (seqprep works best if both R1 and R2 reads contains the adapter sequence (partial is fine) at the 3' end and there is a good overlap between R1 and R2).
+
+#----------------------------
+# Description and usage of the pipeline
+#----------------------------
+#	This pipeline script is for analyzing the Illumina sequencing data of circle PAM assay (developed by Ryan Fuchs).
+#	It takes pair-end fastq files as input, after merging the pair-end reads into full-length fragments and mapping them to the reference sequence, 
+#	it determines the cleavage pattern and PAM sequences and reports the results to multiple output files.
+# In details, this scripts performs the following tasks: 			 
+# 1, trim adapters and merge forward and reverse read* (seqprep)
+# 	*NOTE: Before merging the reads, run fastqc to check data quality read length (seqprep works best if both R1 and R2 reads contains the adapter sequence (partial is fine) at the 3' end and there is a good overlap between R1 and R2).
+#	Also if the libraries were sequenced on Nextseq @ NEB, it sometimes adds an additional base (often G or A) to the 5' end of all the R2 reads. If that's the case, use "cutadapt --cut 1" to trim the 1st base off all the R2 reads beforehand. 
+# 2, remove short reads (<100bp)
+# 3, map merged reads to the reference (bowtie2)
+# 4, characterize cutting pattern and extract PAM sequence from good alignments 
+#        Criteria for determine cutting pattern
+#        1, Read must map to the correct reference (XL or XXL)
+#        2, pirmary alignment only (FLAG !=256)
+#        3, MAPQ > 20
+#        4, alignment left most position <=25 (upstream of the PAM region)
+#        5, if the sequence before PAM region match the reference and
+#              --if read length = reference original lenghth (XL=140; XXL=120):  blunt end
+#              --if read length < reference original length: 3'overhang, overhang length= reference length - read length       
+#              --if read length > reference original length and the extra bases at the 3' end wrt the reference is same as the beginning of the read: 5' overhang, overhang length= read length - reference length
+#       calls a Perl script: [characterize_cut_pattern_from_circle_PAM.pl]
+#
+# This pipeline will generate the following intermediate and final output files:
+# 1, adapter trimmed R1 fastq file (output of step 1): *_trimmed.fq.gz
+# 2, adapter trimmed R2 fastq file (output of step 1): *_trimmed.fq.gz
+# 3, fastq file for merged reads (output of step 1): *_merged.fq.gz
+# 4, fastq file for merged reads with desired read length, default is >=100bp (output of step 2): *_merged_100bp+.fq
+# 5, summary of read length trimming result (output of step 2): *_merged_length_trimming_report.txt
+# 6, bowtie2 output sam file (output of step 3): *_merged_100bp+_bt2.sam
+# 7, result of cleavage pattern (blunt, 5overhang, 3overhang); distance to PAM and overhang size and PAM sequences of each good alignment (output of step 4) : *_merged_100bp+_cut_pattern_result.txt
+# 8, summary of the final results (output of step 4): *_merged_100bp+_cut_pattern_result_summary.txt
+# 9, count and fraction matrices of blunt cuts (count for each distance to PAM: 1 to 25): *_merged_100bp+_cut_pattern_result_blunt_matrix.txt
+# 10, distance (C) x overhang (R) matrices of 5'overhang (one for count, one for fraction): *_merged_100bp+_cut_pattern_result_5overhang_matrix.txt
+# 11, distance (C) x overhang (R) matrices of 3'overhang (one for count, one for fraction): *_merged_100bp+_cut_pattern_result_3overhang_matrix.txt
+# 12, top strand distrance (C) X bottom strand distance (R) matrics of all cutting patterns combined: 25 columns X 36 rows (-5 to 30): *_merged_100bp+_cut_pattern_result_combined_matrix.txt
+#
+## Usage
+#	bash circle_PAM_data_analysis_pipeline.sh R1_fastq_file R2_fastq_file output_prefix bowtie2_index reference_name reference_sequence
+#
+## Usage (on a computing cluster):
+#	qsub circle_PAM_data_analysis_pipeline.sh R1_fastq_file R2_fastq_file output_prefix bowtie2_index reference_name reference_sequence
+#
+# To run this pipeline, you will need to supply the following 6 arguments (separate the arguments by space):
+# 1, R1_fastq_file: fastq of R1. File name should end with "gz", "fastq" or "fq"
+# 2, R2_fastq_file: fastq of R2.  File name should end with "gz", "fastq" or "fq"  
+# 3 output_prefix: prefix of all the output file names
+# 4, bowtie2_index: The path plus basename of the index for the reference genome. The basename is the name of any of the index files up to but not including the final .1.bt2 / .rev.1.bt2 / etc.   
+# 5, reference_name: name of the reference sequence (it should be the same as the header (the content after ">") of the reference fasta file) 
+# 6, reference_sequence: sequence of the reference sequence
+#
+#--------------
+# Example:
+#--------------
+# Cas9 digestion experiment using XL as the substrate
+#== Illumina sequencing reads fastq files:
+# 	R1: 44.1.fastq
+# 	R2: 44.2.fastq 
+#== Prefix of all the output files: cas9_XL (you can use any name as appropriate and informative) 
+#== Prefix of Bowtie2 index files for the XL substrate: ~/work/projects/CirclePAM/reference/circle_pam_substrate 
+#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "~/work/projects/CirclePAM/reference/")
+#== Reference sequence name: XL
+#== Reference sequence: TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
+
+#Command: 
+qsub ~/work/projects/CirclePAM/script/circle_PAM_data_analysis_pipeline.sh 44.1.fastq 44.2.fastq cas9_XL ~/work/projects/CirclePAM/reference/circle_pam_substrate XL TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
+
+# Note: if the script is not in the current directory, you need to provide the path to the script. 
+# In this case, the script is saved in "~/work/projects/CirclePAM/script/"
+
+#================================================================
+# Step 3, Generate Position Weight Matrix and sequence logo for the PAM sequences of a specific cut pattern 
+# using the output from Step 2 (*cut_pattern_result_summary.txt) and the background base frequencies from Step 1
+# Scripts: 
+# (1) [pam_selection_and_sequence_logo.sh] for Cas9-like proteins (cuts upstream of PAM)
+# (2) [pam_selection_and_sequence_logo_cas12like.sh] for Cas12-like proteins (cuts downstream of PAM)	
+#================================================================
+#----------------
+# Description: 
+#----------------
+#	This program takes the output file (*cut_pattern_result_summary.txt) of the circle_PAM_data_analysis_pipeline as input file, 
+#	selects the PAM sequences* for a specific cut pattern (specified by user), then 
+#	calculates the per-position base frequency as well as the Position Weight Matrix (PWM); and finally 
+#	generates a regular sequence logo and a PWM sequence logo.  
+#	The PWM is created by comparing the base frequencies of the PAM sequence to the background base frequencies.
+#	You can provide the background base frequencies for A,C,G,T (as percentage) in the command line;
+#	or the program will assume equal base composition as A=C=G=T=25(%)
+#
+#	* For Cas12-like proteins (cleaves downstream of the PAM sequences), the PAM sequence is reverse complement to the reference sequence.
+#	  Therefore, the reverse complement sequences are extracted for downstream analysis. Use [pam_selection_and_sequence_logo_cas12like.sh] 		
+#
+# An example of the content of the input file (*cut_pattern_result_summary.txt) 
+# RID     Reference       strand  type    distance        overhang        PAM
+# NS500355:NS500355:HVWMYAFXX:1:11101:10028:1465  XL      +       blunt   4       0       GGTTCCAGGG
+# NS500355:NS500355:HVWMYAFXX:1:11101:10066:14846 XL      +       5overhang       5       1       GGTTAAAGGT
+# NS500355:NS500355:HVWMYAFXX:1:11101:10124:13112 XL      -       blunt   3       0       TGGAAGGATT
+#
+# Selection of the PAM sequence are based on the combination of "type", "distance" and "overhang"
+#
+#--------------
+# Output files
+#--------------
+# This program will produce the following 6 output files:
+# 1, a sequence file for the selected PAM: *_pam_seq.txt
+# 2, sequence logo of the selected PAM: *_pam_seq_logo.eps
+# 3, data used for generating the sequence logo: *_pam_seq_logodata.txt
+# 4, a table of per-position base frequency of the selected PAM sequences (this table is used for making the position weight matrix in R): *_pam_seq_base_freq.txt
+# 5, a regular sequence logo of the selected PAM sequences: *_pam_seq_logo.eps
+# 6, a Position Weight Matrix sequence logo of the selected PAM sequences: *_position_weight_matrix_logo.pdf
+
+#--------------
+# Usage
+#--------------
+# bash pam_selection_and_sequence_logo.sh inputfile output_prefix end_type distance_to_PAM overhang_size background_A_perc(optional) background_C_perc(optional) background_G_perc(optional) background_T_perc(optional)
+#
+## On a computing cluster: 
+# qsub pam_selection_and_sequence_logo.sh inputfile output_prefix end_type distance_to_PAM overhang_size background_A_perc(optional) background_C_perc(optional) background_G_perc(optional) background_T_perc(optional)
+#
+# Where:
+# inputfile: input file name, which is the output file (*cut_pattern_result_summary.txt) of the circle_PAM_data_analysis_pipeline 
+# output_prefix: prefix of all the output file names
+# end_type: type of the cleavage ends, choose from "blunt", "5overhang" and "3overhang" (corresponds to the 4th column in the input file)
+# distance_to_PAM: the distance from the cut site w.r.t the top strand of the reference to the 1st base of the randomized region (PAM) in the substrate (corresponds to the 5th column in the input file)
+# overhang_size: overhang size (corresponds to the 6th column in the input file)
+# background_A_perc(optional):optional: background A percentage. value ranges between 0 to 100*
+# background_C_perc(optional):optional: background C percentage. value ranges between 0 to 100*
+# background_G_perc(optional):optional: background G percentage. value ranges between 0 to 100*
+# background_T_perc(optional):optional: background T percentage. value ranges between 0 to 100*
+# * NOTE: percentages of the 4 background bases have to add up to 100
+#
+#---------------
+# Example:
+#---------------
+# (1) To generate sequence logo and PWM logo for the PAM sequences of Cas9 major cleavage group (blunt-end 3bp upstream of PAM)
+#== Input (PAM and cut pattern result file from step 2): cas9_XL_merged_100bp+_cut_pattern_result.txt
+#== Prefix of output files: cas9_XL_blunt_3bp (you can use any name as appropriate and informative) 
+#== end type: blunt
+#== distance to PAM: 3 
+#== overhang size: 0        
+#== background A: 20.2 (result from Step 1)
+#== background C: 18.7 (result from Step 1) 
+#== background G: 34.9 (result from Step 1) 
+#== background T: 26.2 (result from Step 1)
+
+# Command:
+qsub ~/work/projects/CirclePAM/script/pam_selection_and_sequence_logo.sh cas9_XL_merged_100bp+_cut_pattern_result.txt Cas9_XL_blunt_3bp blunt 3 0 20.2 18.7 34.9 26.2
+
+# (2) To generate sequence logo and PWM logo for the PAM sequences of Cas12 major cleavage group (5overhang, cleavage on the bottom strand is 23bp downstream of PAM, creates 6bp overhang)
+#== Input (PAM and cut pattern result file from step 2): cas12_XL_merged_100bp+_cut_pattern_result.txt
+#== Prefix of output files: cas12_XL_5overhang_23_6bp (you can use any name as appropriate and informative) 
+#== end type: 5overhang
+#== distance to PAM: 23 (cut site on the bottom strand)
+#== overhang size: 6        
+#== background A: 20.2 (result from Step 1)
+#== background C: 18.7 (result from Step 1) 
+#== background G: 34.9 (result from Step 1) 
+#== background T: 26.2 (result from Step 1)
+
+# Command:
+qsub ~/work/projects/CirclePAM/script/pam_selection_and_sequence_logo_cas12like.sh cas12_XL_merged_100bp+_cut_pattern_result.txt cas12_XL_5overhang_23_6bp 5overhang 23 6 20.2 18.7 34.9 26.2
+
+
+#================================================================
+# Step 4, Generate heatmap of cleavage patterns in Excel 
+#================================================================
+## Input file: matrix files generated from step 2
+## Excel heatmap template: [cas_nuclease_cleavage_pattern_matrix_heatmap_template.xltx]
+## Usage: copy and paste the matrix into the template to view the heatmap.
+##		 Use "Conditioning Formatting" function in the excel to modify the heatmap
