@@ -111,7 +111,7 @@ ATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAA
 # Save it as a fasta file: [BstXI_XL_control.fa]
 
 # Build bowtie2 index, run the following command:
-bowtie2-build BstXI_control.fa BstXI_control
+bowtie2-build BstXI_XL_control.fa BstXI_XL_control
 
 # NOTE: You can combine all the control substrate sequences (e.g., XL_BstXI, XLL_BstXI etc) in one big fasta file and make index files all together.
 
@@ -168,27 +168,26 @@ bowtie2-build BstXI_control.fa BstXI_control
 #--------------
 # BstXI experiment using XL as the substrate
 #== Illumina sequencing reads fastq files:
-# 	R1: 46.1.fastq
-# 	R2: 46.2.fastq 
+# 	R1: BstXI.1.fastq
+# 	R2: BstXI.2.fastq 
 #== Prefix of all the output files: BstXI_XL_control (you can use any name as appropriate and informative) 
-#== Prefix of Bowtie2 index files for the BstXI substrates: ~/work/projects/CirclePAM/reference/BstXI_control 
-#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "~/work/projects/CirclePAM/reference/")
+#== Prefix of Bowtie2 index files for the BstXI substrates: ./reference/BstXI_XL_control 
+#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "./reference/")
 #== Reference sequence name: XL_BstXI
 #== Reference sequence length: 136bp
 #== Start position of the randomized region in the reference sequence: 90 (1-based)
 #== length of the randomized region: 10 bases (default)
 
 #Command: 
-qsub ~/work/projects/CirclePAM/script/circle_PAM_contral_BstXI_data_analysis_pipeline.sh 46.1.fastq 46.2.fastq BstXI_XL_control ~/work/projects/CirclePAM/reference/BstXI_control XL_BstXI 136 90 10 
+qsub circle_PAM_control_BstXI_data_analysis_pipeline.sh BstXI.1.fastq BstXI.2.fastq BstXI_XL_control ./reference/BstXI_XL_control XL_BstXI 136 90 10 
 # NOTE: if the script is not in the current directory, you need to provide the path to the script. 
-# In this case, the script is saved in "~/work/projects/CirclePAM/script/"
 
 # It will generate an output file (BstXI_XL_control_merged_100bp+_random_sequence_base_freq.txt) with the following content:
-# A       C       G       T
-# 20.15   18.71   34.93   26.22
+#A       C       G       T
+#19.15   18.42   34.91   27.52
 #
-## NOTE: In theory the values of the 4 bases should add up to 100, however, it sometimes could be slightly lower (e.g., 99.9) or higher (100.1, in the above example) due to rounding effect. 
-# 		In that case, you need to make some adjustment (e.g., use A=20.2, C=18.7, G=34.9, T=26.2) to make the sum of the 4 values to be 100 in order to run the script in Step 3 without error.
+## NOTE: In theory the values of the 4 bases should add up to 100, however, it sometimes could be slightly lower (e.g., 99.9) or higher (100.1) due to rounding effect. 
+# 		In that case, you need to make some adjustment to make the sum of the 4 values to be 100 in order to run the script in Step 3 without error.
 
 #================================================================
 # Step 2, run pipeline script: [circle_PAM_data_analysis_pipeline.sh] on Cas-nuclease datasets to characterize cleavage patterns and to extract PAM sequences 
@@ -255,19 +254,18 @@ qsub ~/work/projects/CirclePAM/script/circle_PAM_contral_BstXI_data_analysis_pip
 #--------------
 # Cas9 digestion experiment using XL as the substrate
 #== Illumina sequencing reads fastq files:
-# 	R1: 44.1.fastq
-# 	R2: 44.2.fastq 
+# 	R1: cas9.1.fastq
+# 	R2: cas9.2.fastq 
 #== Prefix of all the output files: cas9_XL (you can use any name as appropriate and informative) 
-#== Prefix of Bowtie2 index files for the XL substrate: ~/work/projects/CirclePAM/reference/circle_pam_substrate 
-#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "~/work/projects/CirclePAM/reference/")
+#== Prefix of Bowtie2 index files for the XL substrate: ./reference/circle_pam_substrate 
+#	NOTE: If the index files are saved in another directory other than the current working directory, you also need to give the path to those files (in this case "./reference/")
 #== Reference sequence name: XL
 #== Reference sequence: TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
 
 #Command: 
-qsub ~/work/projects/CirclePAM/script/circle_PAM_data_analysis_pipeline.sh 44.1.fastq 44.2.fastq cas9_XL ~/work/projects/CirclePAM/reference/circle_pam_substrate XL TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
+qsub circle_PAM_data_analysis_pipeline.sh cas9.1.fastq cas9.2.fastq cas9_XL ./reference/circle_pam_substrate XL TGAGTGGGAAAGGTAATCGAACTGTNNNNNNNNNNCACGTTCAGAATGGCTTGGACTCGACATGGACTCCAATTGTATGGGATGCTAACACCAATCAAATGACACAGACTCCAGTCATGACCCTCAAGAGGAGAAAGCAGTGAGTGGGAAAGGTAATCGAACTGT
 
 # Note: if the script is not in the current directory, you need to provide the path to the script. 
-# In this case, the script is saved in "~/work/projects/CirclePAM/script/"
 
 #================================================================
 # Step 3, Generate Position Weight Matrix and sequence logo for the PAM sequences of a specific cut pattern 
@@ -338,13 +336,13 @@ qsub ~/work/projects/CirclePAM/script/circle_PAM_data_analysis_pipeline.sh 44.1.
 #== end type: blunt
 #== distance to PAM: 3 
 #== overhang size: 0        
-#== background A: 20.2 (result from Step 1)
-#== background C: 18.7 (result from Step 1) 
-#== background G: 34.9 (result from Step 1) 
-#== background T: 26.2 (result from Step 1)
+#== background A: 19.15 (result from Step 1)
+#== background C: 18.42 (result from Step 1) 
+#== background G: 34.91 (result from Step 1) 
+#== background T: 27.52 (result from Step 1)
 
 # Command:
-qsub ~/work/projects/CirclePAM/script/pam_selection_and_sequence_logo.sh cas9_XL_merged_100bp+_cut_pattern_result.txt Cas9_XL_blunt_3bp blunt 3 0 20.2 18.7 34.9 26.2
+qsub pam_selection_and_sequence_logo.sh cas9_XL_merged_100bp+_cut_pattern_result.txt Cas9_XL_blunt_3bp blunt 3 0 19.15 18.42 34.91 27.52
 
 # (2) To generate sequence logo and PWM logo for the PAM sequences of Cas12 major cleavage group (5overhang, cleavage on the bottom strand is 23bp downstream of PAM, creates 6bp overhang)
 #== Input (PAM and cut pattern result file from step 2): cas12_XL_merged_100bp+_cut_pattern_result.txt
@@ -352,13 +350,13 @@ qsub ~/work/projects/CirclePAM/script/pam_selection_and_sequence_logo.sh cas9_XL
 #== end type: 5overhang
 #== distance to PAM: 23 (cut site on the bottom strand)
 #== overhang size: 6        
-#== background A: 20.2 (result from Step 1)
-#== background C: 18.7 (result from Step 1) 
-#== background G: 34.9 (result from Step 1) 
-#== background T: 26.2 (result from Step 1)
+#== background A: 19.15 (result from Step 1)
+#== background C: 18.42 (result from Step 1) 
+#== background G: 34.91 (result from Step 1) 
+#== background T: 27.52 (result from Step 1)
 
 # Command:
-qsub ~/work/projects/CirclePAM/script/pam_selection_and_sequence_logo_cas12like.sh cas12_XL_merged_100bp+_cut_pattern_result.txt cas12_XL_5overhang_23_6bp 5overhang 23 6 20.2 18.7 34.9 26.2
+qsub pam_selection_and_sequence_logo_cas12like.sh cas12_XL_merged_100bp+_cut_pattern_result.txt cas12_XL_5overhang_23_6bp 5overhang 23 6 20.2 18.7 34.9 26.2
 
 
 #================================================================
