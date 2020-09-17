@@ -1,0 +1,19 @@
+## LogoData
+# First column is position number, counting from zero
+# Subsequent columns are raw symbol counts
+# Entropy is mean entropy measured in nats.
+# Low and High are the 95% confidence limits.
+# Weight is the fraction of non-gap symbols in the column.
+#	
+#	A 	C 	G 	T 	Entropy	Low	High	Weight
+1 	7 	5 	11 	6 	0.0618 	0.0002 	0.2839 	1.0000
+2 	5 	1 	16 	7 	0.1694 	0.0224 	0.4617 	1.0000
+3 	3 	2 	24 	0 	0.5225 	0.2079 	0.8372 	1.0000
+4 	4 	7 	10 	8 	0.0613 	0.0003 	0.2747 	1.0000
+5 	4 	4 	10 	11 	0.0750 	0.0005 	0.3232 	1.0000
+6 	4 	4 	11 	10 	0.0678 	0.0001 	0.3217 	1.0000
+7 	5 	5 	11 	8 	0.0492 	0.0000 	0.2839 	1.0000
+8 	5 	6 	8 	10 	0.0634 	0.0006 	0.2619 	1.0000
+9 	4 	8 	9 	8 	0.0736 	0.0019 	0.2697 	1.0000
+10 	7 	7 	8 	7 	0.0686 	0.0033 	0.2301 	1.0000
+# End LogoData
